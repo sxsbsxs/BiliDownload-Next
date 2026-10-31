@@ -17,7 +17,6 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
@@ -49,6 +48,7 @@ class MainActivity : ComponentActivity() {
     private val login by lazy { BiliQrLoginRepository(this) }
     private val accountApi by lazy { app.bilidownload.next.account.BiliAccountApi { cookieVault.read() } }
     private val downloads by lazy { VideoDownloadManager(this) { cookieVault.read() } }
+    private val downloadPreferences by lazy { app.bilidownload.next.core.DownloadPreferences(this) }
     private val mediaLibrary by lazy { MediaLibrary(this) }
     private val dashDownloads by lazy { DashMuxerDownloadManager(this) { cookieVault.read() } }
 
@@ -151,7 +151,9 @@ class MainActivity : ComponentActivity() {
                             else -> emptyList()
                         }
                     } },
-                    onCancelTask = { id -> withContext(Dispatchers.IO) { downloads.cancel(id) } }
+                    onCancelTask = { id -> withContext(Dispatchers.IO) { downloads.cancel(id) } },
+                    initialFileNameTemplate = downloadPreferences.fileNameTemplate,
+                    onFileNameTemplateChanged = { downloadPreferences.fileNameTemplate = it }
                 )
             }
         }
@@ -174,13 +176,13 @@ private fun HomeScreen(
     onLocalResources: suspend () -> List<LocalMedia>,
     onDeleteLocalResource: suspend (android.net.Uri) -> Boolean,
     onAccountContent: suspend (String) -> List<VideoItem>,
-    onCancelTask: suspend (Long) -> Boolean
+    onCancelTask: suspend (Long) -> Boolean,
+    initialFileNameTemplate: String,
+    onFileNameTemplateChanged: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    val downloadPreferences = remember(context) { DownloadPreferences(context) }
     var showDownloadSettings by remember { mutableStateOf(false) }
-    var fileNameTemplate by remember { mutableStateOf(downloadPreferences.fileNameTemplate) }
+    var fileNameTemplate by remember { mutableStateOf(initialFileNameTemplate) }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf(emptyList<VideoItem>()) }
     var loading by remember { mutableStateOf(false) }
@@ -352,7 +354,7 @@ private fun HomeScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = fileNameTemplate,
-                        onValueChange = { fileNameTemplate = it; downloadPreferences.fileNameTemplate = it },
+                        onValueChange = { fileNameTemplate = it; onFileNameTemplateChanged(it) },
                         label = { Text("文件名模板") },
                         supportingText = { Text("支持 {title} 和 {part}，默认只使用视频标题") },
                         singleLine = true
