@@ -91,8 +91,11 @@ class DashMuxerDownloadManager(
             val outVideo = muxer.addTrack(videoFormat)
             val outAudio = muxer.addTrack(audioFormat)
             muxer.start()
-            copyTrack(video, videoTrack, muxer, outVideo, videoFormat)
-            copyTrack(audio, audioTrack, muxer, outAudio, audioFormat)
+            copyInterleavedTracks(
+                video, videoTrack, videoFormat, outVideo,
+                audio, audioTrack, audioFormat, outAudio,
+                muxer
+            )
             muxer.stop()
         } catch (error: Throwable) {
             runCatching { muxer?.stop() }
@@ -113,22 +116,37 @@ class DashMuxerDownloadManager(
         error("下载文件中未找到 ${prefix}轨道")
     }
 
-    private fun copyTrack(
-        extractor: MediaExtractor,
-        sourceTrack: Int,
-        muxer: MediaMuxer,
-        outputTrack: Int,
-        format: MediaFormat
+    private fun copyInterleavedTracks(
+        video: MediaExtractor,
+        videoTrack: Int,
+        videoFormat: MediaFormat,
+        outVideo: Int,
+        audio: MediaExtractor,
+        audioTrack: Int,
+        audioFormat: MediaFormat,
+        outAudio: Int,
+        muxer: MediaMuxer
     ) {
-        extractor.selectTrack(sourceTrack)
-        val capacity = (runCatching { format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE) }.getOrDefault(1024 * 1024))
-            .coerceIn(64 * 1024, 8 * 1024 * 1024)
-        val buffer = ByteBuffer.allocateDirect(capacity)
+        video.selectTrack(videoTrack)
+        audio.selectTrack(audioTrack)
+        fun bufferSize(format: MediaFormat): Int =
+            runCatching { format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE) }
+                .getOrDefault(1024 * 1024).coerceIn(64 * 1024, 8 * 1024 * 1024)
+        val videoBuffer = ByteBuffer.allocateDirect(bufferSize(videoFormat))
+        val audioBuffer = ByteBuffer.allocateDirect(bufferSize(audioFormat))
         val info = MediaCodec.BufferInfo()
-        while (true) {
+        while (video.sampleTime >= 0L || audio.sampleTime >= 0L) {
+            val takeVideo = audio.sampleTime < 0L ||
+                (video.sampleTime >= 0L && video.sampleTime <= audio.sampleTime)
+            val extractor = if (takeVideo) video else audio
+            val buffer = if (takeVideo) videoBuffer else audioBuffer
+            val outputTrack = if (takeVideo) outVideo else outAudio
             buffer.clear()
             val size = extractor.readSampleData(buffer, 0)
-            if (size < 0) break
+            if (size < 0) {
+                extractor.advance()
+                continue
+            }
             info.set(0, size, extractor.sampleTime, extractor.sampleFlags)
             muxer.writeSampleData(outputTrack, buffer, info)
             extractor.advance()
