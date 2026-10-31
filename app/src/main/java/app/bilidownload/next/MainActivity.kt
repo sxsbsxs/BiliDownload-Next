@@ -141,8 +141,10 @@ private fun HomeScreen(
         qrStatus = "等待扫码"
         while (true) {
             delay(2000)
-            val poll = runCatching { onPollQr(key) }.getOrElse {
-                qrStatus = it.message ?: "登录状态读取失败"
+            val poll = try {
+                onPollQr(key)
+            } catch (error: Throwable) {
+                qrStatus = error.message ?: "登录状态读取失败"
                 continue
             }
             qrStatus = poll.message
