@@ -87,16 +87,17 @@ class DashMuxerDownloadManager(
             val audioTrack = findTrack(audio, "audio/")
             val videoFormat = video.getTrackFormat(videoTrack)
             val audioFormat = audio.getTrackFormat(audioTrack)
-            muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            val outVideo = muxer.addTrack(videoFormat)
-            val outAudio = muxer.addTrack(audioFormat)
-            muxer.start()
+            val activeMuxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            muxer = activeMuxer
+            val outVideo = activeMuxer.addTrack(videoFormat)
+            val outAudio = activeMuxer.addTrack(audioFormat)
+            activeMuxer.start()
             copyInterleavedTracks(
                 video, videoTrack, videoFormat, outVideo,
                 audio, audioTrack, audioFormat, outAudio,
-                muxer
+                activeMuxer
             )
-            muxer.stop()
+            activeMuxer.stop()
         } catch (error: Throwable) {
             runCatching { muxer?.stop() }
             throw IllegalStateException("音视频合并失败：${error.message ?: "当前编码格式可能不受设备支持"}", error)
