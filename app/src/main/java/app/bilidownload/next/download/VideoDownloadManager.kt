@@ -18,7 +18,7 @@ data class DownloadTask(
         get() = if (totalBytes > 0L) ((downloadedBytes * 100L) / totalBytes).toInt().coerceIn(0, 100) else 0
 }
 
-class VideoDownloadManager(private val context: Context) {
+class VideoDownloadManager(private val context: Context, private val cookieProvider: () -> String? = { null }) {
     private val manager get() = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
 
     fun enqueue(url: String, title: String, extension: String = "mp4"): Long {
@@ -32,6 +32,7 @@ class VideoDownloadManager(private val context: Context) {
             .setAllowedOverRoaming(false)
             .addRequestHeader("Referer", "https://www.bilibili.com/")
             .addRequestHeader("User-Agent", "Mozilla/5.0")
+            .apply { cookieProvider()?.takeIf { it.isNotBlank() }?.let { addRequestHeader("Cookie", it) } }
             .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "BiliDownload/$safe.$ext")
         return manager.enqueue(request)
     }
