@@ -1,6 +1,7 @@
 package app.bilidownload.next.network
 
 import app.bilidownload.next.data.VideoItem
+import app.bilidownload.next.media.DownloadSource
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -63,12 +64,66 @@ class BiliApi(private val cookieProvider: () -> String? = { null }) {
         val root=json(b.build().toString());if(root.optInt("code")!=0)error(root.optString("message","视频流获取失败"))
         return root.optJSONObject("data")?:error("视频流为空")
     }
-    fun downloadUrl(item:VideoItem,quality:Int=80):String{
+    fun downloadSource(item:VideoItem,quality:Int=80):DownloadSource{
         val data=playUrl(item,quality)
-        data.optJSONArray("durl")?.optJSONObject(0)?.optString("url")?.takeIf{it.startsWith("http")}?.let{return it}
-        if(data.optJSONObject("dash")!=null) error("该视频为 DASH 音视频分离格式；当前版本尚未完成音视频合并，已阻止下载无声视频")
-        error("没有可下载的视频流，可能需要登录或内容受限")
+        data.optJSONArray("durl")?.optJSONObject(0)?.optString("url")
+            ?.takeIf{it.startsWith("http")}?.let{return DownloadSource.Direct(it)}
+        val dash=data.optJSONObject("dash") ?: error("没有可下载的视频流，可能需要登录或内容受限")
+        val videos=dash.optJSONArray("video") ?: error("视频轨道为空")
+        val videoCandidates=(0 until videos.length()).mapNotNull { index ->
+            videos.optJSONObject(index)?.let { obj ->
+                val urls=streamUrls(obj)
+                if(urls.isEmpty()) null else Triple(obj.optInt("id"),obj.optString("codecs"),urls)
+            }
+        }
+        val selectedVideo=videoCandidates.filter { it.first<=quality }.maxByOrNull { it.first }
+            ?: videoCandidates.maxByOrNull { it.first }
+            ?: error("没有可用的视频轨道")
+        val audioCandidates=mutableListOf<Pair<Long,List<String>>>()
+        val audios=dash.optJSONArray("audio")
+        if(audios!=null) for(index in 0 until audios.length()) {
+            val obj=audios.optJSONObject(index) ?: continue
+            val urls=streamUrls(obj)
+            if(urls.isNotEmpty()) audioCandidates.add(obj.optLong("bandwidth") to urls)
+        }
+        val dolby=dash.optJSONObject("dolby")?.optJSONArray("audio")
+        if(dolby!=null) for(index in 0 until dolby.length()) {
+            val obj=dolby.optJSONObject(index) ?: continue
+            val urls=streamUrls(obj)
+            if(urls.isNotEmpty()) audioCandidates.add(obj.optLong("bandwidth") to urls)
+        }
+        val flac=dash.optJSONObject("flac")?.optJSONObject("audio")
+        if(flac!=null) {
+            val urls=streamUrls(flac)
+            if(urls.isNotEmpty()) audioCandidates.add(flac.optLong("bandwidth") to urls)
+        }
+        val selectedAudio=audioCandidates.maxByOrNull { it.first }?.second
+            ?: error("未返回音频轨道，已阻止下载无声视频")
+        return DownloadSource.Dash(
+            videoUrls=selectedVideo.third,
+            audioUrls=selectedAudio,
+            quality=selectedVideo.first,
+            videoCodec=selectedVideo.second,
+            audioCodec="DASH Audio"
+        )
     }
+
+    private fun streamUrls(obj:JSONObject):List<String>{
+        val urls=mutableListOf<String>()
+        obj.optString("baseUrl").takeIf{it.startsWith("http")}?.let{urls.add(it)}
+        val backup=obj.optJSONArray("backupUrl")
+        if(backup!=null) for(index in 0 until backup.length()) {
+            backup.optString(index).takeIf{it.startsWith("http")}?.let{urls.add(it)}
+        }
+        return urls.distinct()
+    }
+
+    fun downloadUrl(item:VideoItem,quality:Int=80):String =
+        when(val source=downloadSource(item,quality)) {
+            is DownloadSource.Direct -> source.url
+            is DownloadSource.Dash -> error("该视频需要下载视频与音频两条轨道并合并，请使用音视频合并下载流程")
+        }
+
     fun subtitleTracks(item:VideoItem):List<Pair<String,String>>{
         val v=if(item.cid==0L)videoInfo(item.bvid.ifBlank{item.aid.toString()})else item
         val url="https://api.bilibili.com/x/player/v2".toHttpUrl().newBuilder().addQueryParameter("aid",v.aid.toString()).addQueryParameter("cid",v.cid.toString()).build().toString()
