@@ -2,6 +2,7 @@ package app.bilidownload.next.download
 
 import android.content.ContentValues
 import android.content.Context
+import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
@@ -123,7 +124,7 @@ class DashMuxerDownloadManager(
         val capacity = (runCatching { format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE) }.getOrDefault(1024 * 1024))
             .coerceIn(64 * 1024, 8 * 1024 * 1024)
         val buffer = ByteBuffer.allocateDirect(capacity)
-        val info = MediaMuxer.BufferInfo()
+        val info = MediaCodec.BufferInfo()
         while (true) {
             buffer.clear()
             val size = extractor.readSampleData(buffer, 0)
