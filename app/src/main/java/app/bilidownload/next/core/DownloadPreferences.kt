@@ -14,7 +14,7 @@ class DownloadPreferences(context: Context) {
         get() = runCatching { DownloadLocation.valueOf(prefs.getString("location", null) ?: "") }.getOrDefault(DownloadLocation.PUBLIC_DOWNLOADS)
         set(value) { prefs.edit().putString("location", value.name).apply() }
     var fileNameTemplate: String
-        get() = prefs.getString("file_name_template", "{title}_{part}") ?: "{title}_{part}"
+        get() = prefs.getString("file_name_template", "{title}") ?: "{title}"
         set(value) { prefs.edit().putString("file_name_template", value.take(120)).apply() }
     var deleteSourceAfterMerge: Boolean
         get() = prefs.getBoolean("delete_source_after_merge", false)
