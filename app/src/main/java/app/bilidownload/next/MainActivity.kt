@@ -1,7 +1,5 @@
 package app.bilidownload.next
 
-import android.app.DownloadManager
-import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -26,90 +24,208 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class MainActivity:ComponentActivity() {
+class MainActivity : ComponentActivity() {
     private val api by lazy { BiliApi() }
-    override fun onCreate(savedInstanceState:Bundle?) {
+
+    override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme(colorScheme=lightColorScheme(primary=androidx.compose.ui.graphics.Color(0xFF00A1D6))) {
+            MaterialTheme(colorScheme = lightColorScheme(primary = androidx.compose.ui.graphics.Color(0xFF00A1D6))) {
                 HomeScreen(
-                    onSearch={q,done -> lifecycleScope.launch {
-                        val result=withContext(Dispatchers.IO) { runCatching { val id=VideoInputParser.parse(q); if(id!=null) listOf(api.videoInfo(id)) else api.search(q) } }
-                        result.onSuccess { done(it, null) }.onFailure { done(emptyList(), it.message ?: "搜索失败") }
-                    }},
-                    onLoadPages={item,done -> lifecycleScope.launch {
-                        val result=withContext(Dispatchers.IO){runCatching{api.videoPages(item)}}
-                        result.onSuccess { done(it,null) }.onFailure { done(emptyList(),it.message ?: "分P读取失败") }
-                    }},
-                    onDownload={item,quality,report -> lifecycleScope.launch {
-                        val result=withContext(Dispatchers.IO){runCatching{api.downloadUrl(item,quality)}}
-                        result.onSuccess {
-                            VideoDownloadManager(this@MainActivity).enqueue(it,item.title)
-                            report("已加入系统下载队列")
-                        }.onFailure { report(it.message ?: "下载失败") }
-                    }}
+                    onSearch = { q, done ->
+                        lifecycleScope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    val id = VideoInputParser.parse(q)
+                                    if (id != null) listOf(api.videoInfo(id)) else api.search(q)
+                                }
+                            }
+                            result.onSuccess { done(it, null) }
+                                .onFailure { done(emptyList(), it.message ?: "搜索失败") }
+                        }
+                    },
+                    onLoadPages = { item, done ->
+                        lifecycleScope.launch {
+                            val result = withContext(Dispatchers.IO) { runCatching { api.videoPages(item) } }
+                            result.onSuccess { done(it, null) }
+                                .onFailure { done(emptyList(), it.message ?: "分P读取失败") }
+                        }
+                    },
+                    onDownload = { item, quality, report ->
+                        lifecycleScope.launch {
+                            val result = withContext(Dispatchers.IO) { runCatching { api.downloadUrl(item, quality) } }
+                            result.onSuccess {
+                                VideoDownloadManager(this@MainActivity).enqueue(it, item.title)
+                                report("已加入系统下载队列")
+                            }.onFailure { report(it.message ?: "下载失败") }
+                        }
+                    },
+                    onExtras = { item, report ->
+                        lifecycleScope.launch {
+                            val result = withContext(Dispatchers.IO) { runCatching { api.subtitleTracks(item) } }
+                            result.onSuccess { tracks ->
+                                val manager = VideoDownloadManager(this@MainActivity)
+                                tracks.forEachIndexed { index, track ->
+                                    manager.enqueue(track.second, "${item.title}_${track.first.ifBlank { "字幕" }}_${index + 1}", "json")
+                                }
+                                if (item.cid > 0L) {
+                                    manager.enqueue(
+                                        "https://api.bilibili.com/x/v1/dm/list.so?oid=${item.cid}",
+                                        "${item.title}_弹幕",
+                                        "xml"
+                                    )
+                                }
+                                report("字幕 ${tracks.size} 条，弹幕已提交下载")
+                            }.onFailure { report(it.message ?: "字幕/弹幕获取失败") }
+                        }
+                    }
                 )
             }
         }
     }
-    if(showPages) AlertDialog(
-        onDismissRequest={showPages=false},
-        title={Text("选择分P")},
-        text={
-            LazyColumn(modifier=Modifier.heightIn(max=420.dp)) {
-                items(pageChoices,key={it.id}) { page ->
-                    TextButton(onClick={showPages=false;onDownload(page,quality){message=it}},modifier=Modifier.fillMaxWidth()) {
-                        Column(Modifier.fillMaxWidth()) {
-                            Text(page.title,maxLines=2)
-                            Text(page.duration,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton={TextButton(onClick={showPages=false}){Text("关闭")}}
-    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun HomeScreen(onSearch:(String,(List<VideoItem>,String?)->Unit)->Unit,onLoadPages:(VideoItem,(List<VideoItem>,String?)->Unit)->Unit,onDownload:(VideoItem,Int,(String)->Unit)->Unit) {
-    var query by remember{mutableStateOf("")}
-    var results by remember{mutableStateOf(emptyList<VideoItem>())}
-    var loading by remember{mutableStateOf(false)}
-    var quality by remember{mutableIntStateOf(80)}
-    var pageChoices by remember{mutableStateOf(emptyList<VideoItem>())}
-    var showPages by remember{mutableStateOf(false)}
-    var message by remember{mutableStateOf("搜索公开视频，或粘贴 BV / AV 号及视频链接")}
-    Scaffold(topBar={TopAppBar(title={Column{Text("BiliDownload",fontWeight=FontWeight.Bold);Text("NEXT · 视频下载工具",style=MaterialTheme.typography.labelSmall)}},actions={IconButton(onClick={message="设置与账号管理模块正在接入"}){Icon(Icons.Default.Settings,"设置")}})}) { pad ->
-        Column(Modifier.fillMaxSize().padding(pad).padding(horizontal=16.dp)) {
+@Composable
+private fun HomeScreen(
+    onSearch: (String, (List<VideoItem>, String?) -> Unit) -> Unit,
+    onLoadPages: (VideoItem, (List<VideoItem>, String?) -> Unit) -> Unit,
+    onDownload: (VideoItem, Int, (String) -> Unit) -> Unit,
+    onExtras: (VideoItem, (String) -> Unit) -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    var results by remember { mutableStateOf(emptyList<VideoItem>()) }
+    var loading by remember { mutableStateOf(false) }
+    var quality by remember { mutableIntStateOf(80) }
+    var pageChoices by remember { mutableStateOf(emptyList<VideoItem>()) }
+    var showPages by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf("搜索公开视频，或粘贴 BV / AV 号及视频链接") }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text("BiliDownload", fontWeight = FontWeight.Bold)
+                        Text("NEXT · 视频下载工具", style = MaterialTheme.typography.labelSmall)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { message = "账号登录与设置模块尚未接通" }) {
+                        Icon(Icons.Default.Settings, "设置")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
             Spacer(Modifier.height(12.dp))
-            OutlinedTextField(value=query,onValueChange={query=it},modifier=Modifier.fillMaxWidth(),singleLine=true,placeholder={Text("搜索视频 / BV号 / AV号 / 链接")},trailingIcon={IconButton(enabled=query.isNotBlank()&&!loading,onClick={loading=true;onSearch(query.trim()){items,error -> results=items;loading=false;message=error ?: if(items.isEmpty())"没有找到结果，请检查网络或输入内容" else "找到 ${items.size} 个视频"}}){Icon(Icons.Default.Search,"搜索")}})
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                placeholder = { Text("搜索视频 / BV号 / AV号 / 链接") },
+                trailingIcon = {
+                    IconButton(
+                        enabled = query.isNotBlank() && !loading,
+                        onClick = {
+                            loading = true
+                            onSearch(query.trim()) { items, error ->
+                                results = items
+                                loading = false
+                                message = error ?: if (items.isEmpty()) "没有找到结果" else "找到 ${items.size} 个视频"
+                            }
+                        }
+                    ) { Icon(Icons.Default.Search, "搜索") }
+                }
+            )
             Spacer(Modifier.height(8.dp))
-            Text("免登录搜索公开内容 · 受限画质及内容遵循账号权限",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "免登录搜索公开内容 · 画质受账号权限和视频本身限制",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(Modifier.height(8.dp))
-            Text("目标画质",style=MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                listOf(32 to "清晰", 64 to "高清", 80 to "1080P", 112 to "1080P+", 120 to "4K").forEach { (q,label) ->
-                    FilterChip(selected=quality==q,onClick={quality=q},label={Text(label)})
+            Text("目标画质", style = MaterialTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                listOf(32 to "清晰", 64 to "高清", 80 to "1080P", 112 to "1080P+", 120 to "4K").forEach { (value, label) ->
+                    FilterChip(
+                        selected = quality == value,
+                        onClick = { quality = value },
+                        label = { Text(label) }
+                    )
                 }
             }
-            Spacer(Modifier.height(8.dp)); Text(message,style=MaterialTheme.typography.bodySmall)
-            if(loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-            LazyColumn(verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(vertical=12.dp)) {
-                items(results,key={it.id}) { item ->
+            Spacer(Modifier.height(8.dp))
+            Text(message, style = MaterialTheme.typography.bodySmall)
+            if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(vertical = 12.dp)
+            ) {
+                items(results, key = { it.id }) { item ->
                     ElevatedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(14.dp)) {
-                            Text(item.title,style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
-                            Spacer(Modifier.height(5.dp)); Text("${item.owner} · ${item.duration}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                            if(item.description.isNotBlank()){Spacer(Modifier.height(5.dp));Text(item.description,maxLines=2,style=MaterialTheme.typography.bodySmall)}
-                            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End) {
-                                TextButton(onClick={onLoadPages(item){pages,error -> pageChoices=pages;showPages=pages.isNotEmpty();message=error ?: "读取到 ${pages.size} 个分P"}}){Text("分P")}
-                                Button(onClick={onDownload(item,quality){message=it}}){Icon(Icons.Default.Download,null);Spacer(Modifier.width(6.dp));Text("下载")}
+                            Text(item.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(5.dp))
+                            Text(
+                                "${item.owner} · ${item.duration}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (item.description.isNotBlank()) {
+                                Spacer(Modifier.height(5.dp))
+                                Text(item.description, maxLines = 2, style = MaterialTheme.typography.bodySmall)
+                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                TextButton(onClick = { onExtras(item) { message = it } }) { Text("字幕/弹幕") }
+                                TextButton(onClick = {
+                                    onLoadPages(item) { pages, error ->
+                                        pageChoices = pages
+                                        showPages = pages.isNotEmpty()
+                                        message = error ?: "读取到 ${pages.size} 个分P"
+                                    }
+                                }) { Text("分P") }
+                                Button(onClick = { onDownload(item, quality) { message = it } }) {
+                                    Icon(Icons.Default.Download, null)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("下载")
+                                }
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    if (showPages) {
+        AlertDialog(
+            onDismissRequest = { showPages = false },
+            title = { Text("选择分P") },
+            text = {
+                LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                    items(pageChoices, key = { it.id }) { page ->
+                        TextButton(
+                            onClick = {
+                                showPages = false
+                                onDownload(page, quality) { message = it }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(page.title, maxLines = 2)
+                                Text(page.duration, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPages = false }) { Text("关闭") }
+            }
+        )
     }
 }
