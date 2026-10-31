@@ -22,11 +22,14 @@ class MediaLibrary(private val context: Context) {
         val collection = if (Build.VERSION.SDK_INT >= 29)
             MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL)
         else MediaStore.Files.getContentUri("external")
-        val projection = arrayOf(
-            MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME,
-            MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.SIZE,
-            MediaStore.MediaColumns.DATE_MODIFIED, MediaStore.MediaColumns.RELATIVE_PATH
-        )
+        val projection = buildList {
+            add(MediaStore.MediaColumns._ID)
+            add(MediaStore.MediaColumns.DISPLAY_NAME)
+            add(MediaStore.MediaColumns.MIME_TYPE)
+            add(MediaStore.MediaColumns.SIZE)
+            add(MediaStore.MediaColumns.DATE_MODIFIED)
+            if (Build.VERSION.SDK_INT >= 29) add(MediaStore.MediaColumns.RELATIVE_PATH)
+        }.toTypedArray()
         val selection = if (Build.VERSION.SDK_INT >= 29) "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?" else null
         val args = if (selection != null) arrayOf("${Environment.DIRECTORY_DOWNLOADS}/BiliDownload/%") else null
         return context.contentResolver.query(collection, projection, selection, args,
