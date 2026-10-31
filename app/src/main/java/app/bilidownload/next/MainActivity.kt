@@ -40,7 +40,7 @@ class MainActivity : ComponentActivity() {
     private val cookieVault by lazy { CookieVault(this) }
     private val api by lazy { BiliApi { cookieVault.read() } }
     private val login by lazy { BiliQrLoginRepository(this) }
-    private val downloads by lazy { VideoDownloadManager(this) }
+    private val downloads by lazy { VideoDownloadManager(this) { cookieVault.read() } }
     private val dashDownloads by lazy { DashMuxerDownloadManager(this) { cookieVault.read() } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
