@@ -14,8 +14,10 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
@@ -29,6 +31,9 @@ import app.bilidownload.next.account.QrLoginPoll
 import app.bilidownload.next.data.VideoItem
 import app.bilidownload.next.storage.MediaLibrary
 import app.bilidownload.next.storage.LocalMedia
+import app.bilidownload.next.core.DownloadPreferences
+import app.bilidownload.next.core.BatchQualityPolicy
+import app.bilidownload.next.core.DownloadLocation
 import app.bilidownload.next.download.DashMuxerDownloadManager
 import app.bilidownload.next.download.DownloadTask
 import app.bilidownload.next.media.DownloadSource
@@ -174,6 +179,11 @@ private fun HomeScreen(
     onCancelTask: suspend (Long) -> Boolean
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val downloadPreferences = remember(context) { DownloadPreferences(context) }
+    var settingsVersion by remember { mutableIntStateOf(0) }
+    var showDownloadSettings by remember { mutableStateOf(false) }
+    var fileNameTemplate by remember { mutableStateOf(downloadPreferences.fileNameTemplate) }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf(emptyList<VideoItem>()) }
     var loading by remember { mutableStateOf(false) }
@@ -253,6 +263,7 @@ private fun HomeScreen(
                     IconButton(onClick = { showLocalLibrary = true; scope.launch { localResources = runCatching { onLocalResources() }.getOrDefault(emptyList()) } }) { Icon(Icons.Default.Folder, "本地资源") }
                     IconButton(onClick = { showTasks = true }) { Icon(Icons.Default.History, "下载任务") }
                     IconButton(onClick = { showAccountHub = true; accountTab = "history"; accountLoading = true; scope.launch { accountItems = runCatching { onAccountContent("history") }.getOrDefault(emptyList()); accountLoading = false } }) { Icon(Icons.Default.Person, "个人中心") }
+                    IconButton(onClick = { showDownloadSettings = true }) { Icon(Icons.Default.Tune, "下载设置") }
                     IconButton(onClick = {
                         showAccount = true
                         qrCode = null
@@ -334,6 +345,40 @@ private fun HomeScreen(
                 }
             }
         }
+    }
+
+    if (showDownloadSettings) {
+        AlertDialog(
+            onDismissRequest = { showDownloadSettings = false },
+            title = { Text("下载设置") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("批量下载画质策略", style = MaterialTheme.typography.titleSmall)
+                    listOf(BatchQualityPolicy.BEST_COMMON to "统一最高可用画质", BatchQualityPolicy.KEEP_REQUESTED to "保持所选画质", BatchQualityPolicy.SKIP_UNAVAILABLE to "跳过不支持的项目").forEach { (value, label) ->
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            RadioButton(selected = downloadPreferences.qualityPolicy == value, onClick = { downloadPreferences.qualityPolicy = value; settingsVersion++ })
+                            Text(label)
+                        }
+                    }
+                    Divider()
+                    Text("保存位置", style = MaterialTheme.typography.titleSmall)
+                    listOf(DownloadLocation.PUBLIC_DOWNLOADS to "公共下载目录", DownloadLocation.APP_PRIVATE to "应用私有目录").forEach { (value, label) ->
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            RadioButton(selected = downloadPreferences.location == value, onClick = { downloadPreferences.location = value; settingsVersion++ })
+                            Text(label)
+                        }
+                    }
+                    OutlinedTextField(value = fileNameTemplate, onValueChange = { fileNameTemplate = it; downloadPreferences.fileNameTemplate = it }, label = { Text("文件名模板") }, supportingText = { Text("可用占位符：{title}、{part}") }, singleLine = true)
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Switch(checked = downloadPreferences.deleteSourceAfterMerge, onCheckedChange = { downloadPreferences.deleteSourceAfterMerge = it; settingsVersion++ })
+                        Spacer(Modifier.width(8.dp))
+                        Text("合并完成后清理源文件")
+                    }
+                    Text("设置已保存在本机", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = { TextButton(onClick = { showDownloadSettings = false }) { Text("完成") } }
+        )
     }
 
     if (showLocalLibrary) {
