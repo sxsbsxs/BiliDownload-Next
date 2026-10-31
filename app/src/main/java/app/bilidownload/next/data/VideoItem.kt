@@ -1,0 +1,2 @@
+package app.bilidownload.next.data
+data class VideoItem(val id:String, val bvid:String="", val aid:Long=0, val cid:Long=0, val title:String, val owner:String="未知UP主", val duration:String="", val description:String="")
