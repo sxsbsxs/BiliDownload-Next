@@ -32,8 +32,6 @@ import app.bilidownload.next.data.VideoItem
 import app.bilidownload.next.storage.MediaLibrary
 import app.bilidownload.next.storage.LocalMedia
 import app.bilidownload.next.core.DownloadPreferences
-import app.bilidownload.next.core.BatchQualityPolicy
-import app.bilidownload.next.core.DownloadLocation
 import app.bilidownload.next.download.DashMuxerDownloadManager
 import app.bilidownload.next.download.DownloadTask
 import app.bilidownload.next.media.DownloadSource
@@ -92,8 +90,8 @@ class MainActivity : ComponentActivity() {
                                 result.onSuccess { source ->
                                     runCatching {
                                         when (source) {
-                                            is DownloadSource.Direct -> downloads.enqueue(source.url, item.title)
-                                            is DownloadSource.Dash -> dashDownloads.downloadAndMerge(source, item.title)
+                                            is DownloadSource.Direct -> downloads.enqueue(source.url, formatDownloadName(downloadPreferences.fileNameTemplate, item))
+                                            is DownloadSource.Dash -> dashDownloads.downloadAndMerge(source, formatDownloadName(downloadPreferences.fileNameTemplate, item))
                                         }
                                     }.onSuccess { success++ }.onFailure { failed++ }
                                 }.onFailure { failed++ }
@@ -108,11 +106,11 @@ class MainActivity : ComponentActivity() {
                                 runCatching {
                                     when (source) {
                                         is DownloadSource.Direct -> {
-                                            downloads.enqueue(source.url, item.title)
+                                            downloads.enqueue(source.url, formatDownloadName(downloadPreferences.fileNameTemplate, item))
                                             "已加入下载队列"
                                         }
                                         is DownloadSource.Dash -> {
-                                            dashDownloads.downloadAndMerge(source, item.title)
+                                            dashDownloads.downloadAndMerge(source, formatDownloadName(downloadPreferences.fileNameTemplate, item))
                                             "音视频已合并，保存至 Download/BiliDownload"
                                         }
                                     }
@@ -181,7 +179,6 @@ private fun HomeScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val downloadPreferences = remember(context) { DownloadPreferences(context) }
-    var settingsVersion by remember { mutableIntStateOf(0) }
     var showDownloadSettings by remember { mutableStateOf(false) }
     var fileNameTemplate by remember { mutableStateOf(downloadPreferences.fileNameTemplate) }
     var query by remember { mutableStateOf("") }
@@ -353,28 +350,14 @@ private fun HomeScreen(
             title = { Text("下载设置") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("批量下载画质策略", style = MaterialTheme.typography.titleSmall)
-                    listOf(BatchQualityPolicy.BEST_COMMON to "统一最高可用画质", BatchQualityPolicy.KEEP_REQUESTED to "保持所选画质", BatchQualityPolicy.SKIP_UNAVAILABLE to "跳过不支持的项目").forEach { (value, label) ->
-                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                            RadioButton(selected = downloadPreferences.qualityPolicy == value, onClick = { downloadPreferences.qualityPolicy = value; settingsVersion++ })
-                            Text(label)
-                        }
-                    }
-                    Divider()
-                    Text("保存位置", style = MaterialTheme.typography.titleSmall)
-                    listOf(DownloadLocation.PUBLIC_DOWNLOADS to "公共下载目录", DownloadLocation.APP_PRIVATE to "应用私有目录").forEach { (value, label) ->
-                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                            RadioButton(selected = downloadPreferences.location == value, onClick = { downloadPreferences.location = value; settingsVersion++ })
-                            Text(label)
-                        }
-                    }
-                    OutlinedTextField(value = fileNameTemplate, onValueChange = { fileNameTemplate = it; downloadPreferences.fileNameTemplate = it }, label = { Text("文件名模板") }, supportingText = { Text("可用占位符：{title}、{part}") }, singleLine = true)
-                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        Switch(checked = downloadPreferences.deleteSourceAfterMerge, onCheckedChange = { downloadPreferences.deleteSourceAfterMerge = it; settingsVersion++ })
-                        Spacer(Modifier.width(8.dp))
-                        Text("合并完成后清理源文件")
-                    }
-                    Text("设置已保存在本机", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(
+                        value = fileNameTemplate,
+                        onValueChange = { fileNameTemplate = it; downloadPreferences.fileNameTemplate = it },
+                        label = { Text("文件名模板") },
+                        supportingText = { Text("支持 {title} 和 {part}，默认只使用视频标题") },
+                        singleLine = true
+                    )
+                    Text("文件名会自动清理系统不允许的字符。", style = MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = { TextButton(onClick = { showDownloadSettings = false }) { Text("完成") } }
@@ -582,4 +565,9 @@ private fun taskStatus(task: DownloadTask): String = when (task.status) {
     android.app.DownloadManager.STATUS_SUCCESSFUL -> "已完成"
     android.app.DownloadManager.STATUS_FAILED -> "失败（代码 ${task.reason}）"
     else -> "未知状态"
+}
+
+private fun formatDownloadName(template: String, item: VideoItem): String {
+    val part = item.id.substringAfterLast("_", "1")
+    return template.replace("{title}", item.title).replace("{part}", part).ifBlank { item.title }
 }
