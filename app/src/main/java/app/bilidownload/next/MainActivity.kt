@@ -25,7 +25,9 @@ import app.bilidownload.next.account.QrCodeBitmap
 import app.bilidownload.next.account.QrLoginCode
 import app.bilidownload.next.account.QrLoginPoll
 import app.bilidownload.next.data.VideoItem
+import app.bilidownload.next.download.DashMuxerDownloadManager
 import app.bilidownload.next.download.DownloadTask
+import app.bilidownload.next.media.DownloadSource
 import app.bilidownload.next.download.VideoDownloadManager
 import app.bilidownload.next.network.BiliApi
 import app.bilidownload.next.parser.VideoInputParser
@@ -39,6 +41,7 @@ class MainActivity : ComponentActivity() {
     private val api by lazy { BiliApi { cookieVault.read() } }
     private val login by lazy { BiliQrLoginRepository(this) }
     private val downloads by lazy { VideoDownloadManager(this) }
+    private val dashDownloads by lazy { DashMuxerDownloadManager(this) { cookieVault.read() } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -66,10 +69,20 @@ class MainActivity : ComponentActivity() {
                     },
                     onDownload = { item, quality, report ->
                         lifecycleScope.launch {
-                            val result = withContext(Dispatchers.IO) { runCatching { api.downloadUrl(item, quality) } }
-                            result.onSuccess {
-                                downloads.enqueue(it, item.title)
-                                report("已加入下载队列")
+                            val result = withContext(Dispatchers.IO) { runCatching { api.downloadSource(item, quality) } }
+                            result.onSuccess { source ->
+                                runCatching {
+                                    when (source) {
+                                        is DownloadSource.Direct -> {
+                                            downloads.enqueue(source.url, item.title)
+                                            "已加入下载队列"
+                                        }
+                                        is DownloadSource.Dash -> {
+                                            dashDownloads.downloadAndMerge(source, item.title)
+                                            "音视频已合并，保存至 Download/BiliDownload"
+                                        }
+                                    }
+                                }.onSuccess(report).onFailure { report(it.message ?: "下载失败") }
                             }.onFailure { report(it.message ?: "下载失败") }
                         }
                     },
