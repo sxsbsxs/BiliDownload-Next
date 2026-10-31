@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -40,6 +41,7 @@ class MainActivity : ComponentActivity() {
     private val cookieVault by lazy { CookieVault(this) }
     private val api by lazy { BiliApi { cookieVault.read() } }
     private val login by lazy { BiliQrLoginRepository(this) }
+    private val accountApi by lazy { app.bilidownload.next.account.BiliAccountApi { cookieVault.read() } }
     private val downloads by lazy { VideoDownloadManager(this) { cookieVault.read() } }
     private val dashDownloads by lazy { DashMuxerDownloadManager(this) { cookieVault.read() } }
 
@@ -52,8 +54,13 @@ class MainActivity : ComponentActivity() {
                         lifecycleScope.launch {
                             val result = withContext(Dispatchers.IO) {
                                 runCatching {
+                                    val seasonId = VideoInputParser.parseSeason(q)
                                     val id = VideoInputParser.parse(q)
-                                    if (id != null) listOf(api.videoInfo(id)) to 1 else api.searchPage(q, page)
+                                    when {
+                                        seasonId != null -> accountApi.season(seasonId).episodes to 1
+                                        id != null -> listOf(api.videoInfo(id)) to 1
+                                        else -> api.searchPage(q, page)
+                                    }
                                 }
                             }
                             result.onSuccess { done(it.first, it.second, null) }
@@ -109,6 +116,14 @@ class MainActivity : ComponentActivity() {
                     onAccount = { withContext(Dispatchers.IO) { login.accountName() } },
                     onLogout = { withContext(Dispatchers.IO) { login.logout() } },
                     onTasks = { withContext(Dispatchers.IO) { downloads.tasks() } },
+                    onAccountContent = { type -> withContext(Dispatchers.IO) {
+                        when (type) {
+                            "history" -> accountApi.history()
+                            "watchlater" -> accountApi.watchLater()
+                            "favorites" -> accountApi.favoriteFolders().firstOrNull()?.let { accountApi.favoriteVideos(it.id) }.orEmpty()
+                            else -> emptyList()
+                        }
+                    } },
                     onCancelTask = { id -> withContext(Dispatchers.IO) { downloads.cancel(id) } }
                 )
             }
@@ -128,6 +143,7 @@ private fun HomeScreen(
     onAccount: suspend () -> String?,
     onLogout: suspend () -> Unit,
     onTasks: suspend () -> List<DownloadTask>,
+    onAccountContent: suspend (String) -> List<VideoItem>,
     onCancelTask: suspend (Long) -> Boolean
 ) {
     val scope = rememberCoroutineScope()
@@ -146,6 +162,10 @@ private fun HomeScreen(
     var qrStatus by remember { mutableStateOf("准备二维码…") }
     var qrError by remember { mutableStateOf<String?>(null) }
     var showTasks by remember { mutableStateOf(false) }
+    var showAccountHub by remember { mutableStateOf(false) }
+    var accountTab by remember { mutableStateOf("history") }
+    var accountItems by remember { mutableStateOf(emptyList<VideoItem>()) }
+    var accountLoading by remember { mutableStateOf(false) }
     var tasks by remember { mutableStateOf(emptyList<DownloadTask>()) }
 
     LaunchedEffect(Unit) { accountName = runCatching { onAccount() }.getOrNull() }
@@ -201,6 +221,7 @@ private fun HomeScreen(
                 },
                 actions = {
                     IconButton(onClick = { showTasks = true }) { Icon(Icons.Default.History, "下载任务") }
+                    IconButton(onClick = { showAccountHub = true; accountTab = "history"; accountLoading = true; scope.launch { accountItems = runCatching { onAccountContent("history") }.getOrDefault(emptyList()); accountLoading = false } }) { Icon(Icons.Default.Person, "个人中心") }
                     IconButton(onClick = {
                         showAccount = true
                         qrCode = null
@@ -281,6 +302,42 @@ private fun HomeScreen(
                 }
             }
         }
+    }
+
+    if (showAccountHub) {
+        AlertDialog(
+            onDismissRequest = { showAccountHub = false },
+            title = { Text("个人中心") },
+            text = {
+                Column {
+                    if (accountName == null) Text("登录后可查看账号数据", style = MaterialTheme.typography.bodySmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf("history" to "观看历史", "favorites" to "收藏夹", "watchlater" to "稍后再看").forEach { (key, label) ->
+                            FilterChip(selected = accountTab == key, onClick = {
+                                accountTab = key; accountLoading = true
+                                scope.launch { accountItems = runCatching { onAccountContent(key) }.getOrDefault(emptyList()); accountLoading = false }
+                            }, label = { Text(label) }, enabled = accountName != null)
+                        }
+                    }
+                    if (accountLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if (!accountLoading && accountItems.isEmpty()) Text("暂无内容或接口暂不可用", modifier = Modifier.padding(vertical = 18.dp))
+                    LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                        items(accountItems, key = { it.id }) { v ->
+                            Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                                Text(v.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                Text(v.owner + " · " + v.duration, style = MaterialTheme.typography.labelSmall)
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                    TextButton(onClick = { query = v.bvid.ifBlank { "av" + v.aid }; showAccountHub = false; searchAt(1) }) { Text("查看") }
+                                    TextButton(onClick = { onDownload(v, quality) { message = it; showAccountHub = false } }) { Text("下载") }
+                                }
+                                Divider()
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showAccountHub = false }) { Text("关闭") } }
+        )
     }
 
     if (showPages) {
