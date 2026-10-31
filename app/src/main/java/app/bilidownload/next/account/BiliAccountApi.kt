@@ -30,7 +30,7 @@ class BiliAccountApi(private val cookieProvider: () -> String?) {
 
     private fun checked(url: String): JSONObject {
         val root = get(url)
-        if (root.optInt("code") != 0) error(root.optString("message).ifBlank { "B站接口请求失败" })
+        if (root.optInt("code") != 0) error(root.optString("message").ifBlank { "B站接口请求失败" })
         return root.optJSONObject("data") ?: JSONObject()
     }
 
@@ -40,7 +40,7 @@ class BiliAccountApi(private val cookieProvider: () -> String?) {
         return BiliUserProfile(
             d.optLong("mid"), d.optString("uname"), d.optString("face"),
             d.optString("sign"), d.optJSONObject("level_info")?.optInt("current_level") ?: 0,
-            vip?.optString("label")?.let { JSONObject(it).optString("text") }.orEmpty()
+            vip?.optJSONObject("label")?.optString("text").orEmpty()
         )
     }
 
