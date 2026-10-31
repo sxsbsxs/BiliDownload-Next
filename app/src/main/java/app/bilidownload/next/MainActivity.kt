@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -26,6 +27,8 @@ import app.bilidownload.next.account.QrCodeBitmap
 import app.bilidownload.next.account.QrLoginCode
 import app.bilidownload.next.account.QrLoginPoll
 import app.bilidownload.next.data.VideoItem
+import app.bilidownload.next.storage.MediaLibrary
+import app.bilidownload.next.storage.LocalMedia
 import app.bilidownload.next.download.DashMuxerDownloadManager
 import app.bilidownload.next.download.DownloadTask
 import app.bilidownload.next.media.DownloadSource
@@ -43,6 +46,7 @@ class MainActivity : ComponentActivity() {
     private val login by lazy { BiliQrLoginRepository(this) }
     private val accountApi by lazy { app.bilidownload.next.account.BiliAccountApi { cookieVault.read() } }
     private val downloads by lazy { VideoDownloadManager(this) { cookieVault.read() } }
+    private val mediaLibrary by lazy { MediaLibrary(this) }
     private val dashDownloads by lazy { DashMuxerDownloadManager(this) { cookieVault.read() } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -116,6 +120,8 @@ class MainActivity : ComponentActivity() {
                     onAccount = { withContext(Dispatchers.IO) { login.accountName() } },
                     onLogout = { withContext(Dispatchers.IO) { login.logout() } },
                     onTasks = { withContext(Dispatchers.IO) { downloads.tasks() } },
+                    onLocalResources = { withContext(Dispatchers.IO) { mediaLibrary.list() } },
+                    onDeleteLocalResource = { uri -> withContext(Dispatchers.IO) { mediaLibrary.delete(uri) } },
                     onAccountContent = { type -> withContext(Dispatchers.IO) {
                         when (type) {
                             "history" -> accountApi.history()
@@ -143,6 +149,8 @@ private fun HomeScreen(
     onAccount: suspend () -> String?,
     onLogout: suspend () -> Unit,
     onTasks: suspend () -> List<DownloadTask>,
+    onLocalResources: suspend () -> List<LocalMedia>,
+    onDeleteLocalResource: suspend (android.net.Uri) -> Boolean,
     onAccountContent: suspend (String) -> List<VideoItem>,
     onCancelTask: suspend (Long) -> Boolean
 ) {
@@ -163,6 +171,8 @@ private fun HomeScreen(
     var qrError by remember { mutableStateOf<String?>(null) }
     var showTasks by remember { mutableStateOf(false) }
     var showAccountHub by remember { mutableStateOf(false) }
+    var showLocalLibrary by remember { mutableStateOf(false) }
+    var localResources by remember { mutableStateOf(emptyList<LocalMedia>()) }
     var accountTab by remember { mutableStateOf("history") }
     var accountItems by remember { mutableStateOf(emptyList<VideoItem>()) }
     var accountLoading by remember { mutableStateOf(false) }
@@ -220,6 +230,7 @@ private fun HomeScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showLocalLibrary = true; scope.launch { localResources = runCatching { onLocalResources() }.getOrDefault(emptyList()) } }) { Icon(Icons.Default.Folder, "本地资源") }
                     IconButton(onClick = { showTasks = true }) { Icon(Icons.Default.History, "下载任务") }
                     IconButton(onClick = { showAccountHub = true; accountTab = "history"; accountLoading = true; scope.launch { accountItems = runCatching { onAccountContent("history") }.getOrDefault(emptyList()); accountLoading = false } }) { Icon(Icons.Default.Person, "个人中心") }
                     IconButton(onClick = {
@@ -302,6 +313,34 @@ private fun HomeScreen(
                 }
             }
         }
+    }
+
+    if (showLocalLibrary) {
+        AlertDialog(
+            onDismissRequest = { showLocalLibrary = false },
+            title = { Text("本地资源 · Downloads/BiliDownload") },
+            text = {
+                if (localResources.isEmpty()) Text("还没有找到已保存的资源")
+                else LazyColumn(Modifier.heightIn(max = 460.dp)) {
+                    items(localResources, key = { it.id }) { media ->
+                        Column(Modifier.fillMaxWidth().padding(vertical = 7.dp)) {
+                            Text(media.displayName, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            Text("${media.mimeType} · ${(media.sizeBytes / 1024 / 1024)} MB", style = MaterialTheme.typography.labelSmall)
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                TextButton(onClick = {
+                                    scope.launch {
+                                        runCatching { onDeleteLocalResource(media.uri) }
+                                        localResources = runCatching { onLocalResources() }.getOrDefault(emptyList())
+                                    }
+                                }) { Text("删除") }
+                            }
+                            Divider()
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showLocalLibrary = false }) { Text("关闭") } }
+        )
     }
 
     if (showAccountHub) {
