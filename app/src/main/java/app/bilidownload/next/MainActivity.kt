@@ -78,6 +78,24 @@ class MainActivity : ComponentActivity() {
                                 .onFailure { done(emptyList(), it.message ?: "分P读取失败") }
                         }
                     },
+                    onDownloadBatch = { items, quality, report ->
+                        lifecycleScope.launch {
+                            var success = 0
+                            var failed = 0
+                            for (item in items) {
+                                val result = withContext(Dispatchers.IO) { runCatching { api.downloadSource(item, quality) } }
+                                result.onSuccess { source ->
+                                    runCatching {
+                                        when (source) {
+                                            is DownloadSource.Direct -> downloads.enqueue(source.url, item.title)
+                                            is DownloadSource.Dash -> dashDownloads.downloadAndMerge(source, item.title)
+                                        }
+                                    }.onSuccess { success++ }.onFailure { failed++ }
+                                }.onFailure { failed++ }
+                            }
+                            report("批量任务处理完成：成功 $success 个，失败 $failed 个")
+                        }
+                    },
                     onDownload = { item, quality, report ->
                         lifecycleScope.launch {
                             val result = withContext(Dispatchers.IO) { runCatching { api.downloadSource(item, quality) } }
@@ -143,6 +161,7 @@ private fun HomeScreen(
     onSearch: (String, Int, (List<VideoItem>, Int, String?) -> Unit) -> Unit,
     onLoadPages: (VideoItem, (List<VideoItem>, String?) -> Unit) -> Unit,
     onDownload: (VideoItem, Int, (String) -> Unit) -> Unit,
+    onDownloadBatch: (List<VideoItem>, Int, (String) -> Unit) -> Unit,
     onExtras: (VideoItem, (String) -> Unit) -> Unit,
     onCreateQr: suspend () -> QrLoginCode,
     onPollQr: suspend (String) -> QrLoginPoll,
@@ -162,6 +181,7 @@ private fun HomeScreen(
     var page by remember { mutableIntStateOf(1) }
     var totalPages by remember { mutableIntStateOf(1) }
     var pageChoices by remember { mutableStateOf(emptyList<VideoItem>()) }
+    var selectedPartIds by remember { mutableStateOf(emptySet<String>()) }
     var showPages by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("搜索公开视频，或粘贴 BV / AV 号及视频链接") }
     var accountName by remember { mutableStateOf<String?>(null) }
@@ -289,6 +309,7 @@ private fun HomeScreen(
                                 TextButton(onClick = {
                                     onLoadPages(item) { pages, error ->
                                         pageChoices = pages
+                                        selectedPartIds = pages.map { it.id }.toSet()
                                         showPages = pages.isNotEmpty()
                                         message = error ?: "读取到 ${pages.size} 个分P"
                                     }
@@ -384,24 +405,40 @@ private fun HomeScreen(
             onDismissRequest = { showPages = false },
             title = { Text("选择分P") },
             text = {
-                LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                    items(pageChoices, key = { it.id }) { part ->
-                        TextButton(
-                            onClick = {
-                                showPages = false
-                                onDownload(part, quality) { message = it }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(Modifier.fillMaxWidth()) {
-                                Text(part.title, maxLines = 2)
-                                Text(part.duration, style = MaterialTheme.typography.labelSmall)
+                Column {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        TextButton(onClick = { selectedPartIds = if (selectedPartIds.size == pageChoices.size) emptySet() else pageChoices.map { it.id }.toSet() }) {
+                            Text(if (selectedPartIds.size == pageChoices.size) "取消全选" else "全选")
+                        }
+                        Text("${selectedPartIds.size} / ${pageChoices.size} 已选", modifier = Modifier.padding(top = 12.dp), style = MaterialTheme.typography.labelSmall)
+                    }
+                    LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                        items(pageChoices, key = { it.id }) { part ->
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                Checkbox(checked = part.id in selectedPartIds, onCheckedChange = { checked ->
+                                    selectedPartIds = if (checked) selectedPartIds + part.id else selectedPartIds - part.id
+                                })
+                                Column(Modifier.weight(1f)) {
+                                    Text(part.title, maxLines = 2)
+                                    Text(part.duration, style = MaterialTheme.typography.labelSmall)
+                                }
+                                TextButton(onClick = { showPages = false; onDownload(part, quality) { message = it } }) { Text("下载") }
                             }
+                            Divider()
                         }
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { showPages = false }) { Text("关闭") } }
+            confirmButton = {
+                Row {
+                    TextButton(enabled = selectedPartIds.isNotEmpty(), onClick = {
+                        val selected = pageChoices.filter { it.id in selectedPartIds }
+                        showPages = false
+                        onDownloadBatch(selected, quality) { message = it }
+                    }) { Text("下载选中") }
+                    TextButton(onClick = { showPages = false }) { Text("关闭") }
+                }
+            }
         )
     }
 
