@@ -22,7 +22,7 @@ class BiliApi {
     }
     fun videoInfo(id:String):VideoItem{
         val b="https://api.bilibili.com/x/web-interface/view".toHttpUrl().newBuilder()
-        if(id.startsWith("BV",true))b.addQueryParameter("bvid",id)else b.addQueryParameter("aid",id.removePrefix("av").removePrefix("AV"))
+        if(id.startsWith("BV",true))b.addQueryParameter("bvid",id)else b.addQueryParameter("aid",id.replace(Regex("(?i)^av"), ""))
         val root=json(b.build().toString());if(root.optInt("code")!=0)error(root.optString("message","解析失败"))
         val d=root.getJSONObject("data");val p=d.optJSONArray("pages")?.optJSONObject(0);val sec=d.optInt("duration")
         return VideoItem(d.optString("bvid",d.optString("aid")),d.optString("bvid"),d.optLong("aid"),p?.optLong("cid")?:d.optLong("cid"),d.optString("title"),d.optJSONObject("owner")?.optString("name")?:"未知UP主","${sec/60}:${(sec%60).toString().padStart(2,'0')}",d.optString("desc"))
@@ -30,7 +30,7 @@ class BiliApi {
     fun videoPages(item:VideoItem):List<VideoItem>{
         val id=item.bvid.ifBlank{item.aid.toString()}
         val b="https://api.bilibili.com/x/web-interface/view".toHttpUrl().newBuilder()
-        if(id.startsWith("BV",true))b.addQueryParameter("bvid",id)else b.addQueryParameter("aid",id)
+        if(id.startsWith("BV",true))b.addQueryParameter("bvid",id)else b.addQueryParameter("aid",id.replace(Regex("(?i)^av"), ""))
         val root=json(b.build().toString());if(root.optInt("code")!=0)error(root.optString("message","分P解析失败"))
         val data=root.getJSONObject("data");val arr=data.optJSONArray("pages")?:return emptyList()
         return (0 until arr.length()).mapNotNull{i->arr.optJSONObject(i)?.let{p->val sec=p.optInt("duration");item.copy(id="${item.id}_${p.optInt("page")}",cid=p.optLong("cid"),title="${data.optString("title")} - P${p.optInt("page")} ${p.optString("part")}",duration="${sec/60}:${(sec%60).toString().padStart(2,'0')}")}}
@@ -52,8 +52,8 @@ class BiliApi {
     fun downloadUrl(item:VideoItem,quality:Int=80):String{
         val data=playUrl(item,quality)
         data.optJSONArray("durl")?.optJSONObject(0)?.optString("url")?.takeIf{it.startsWith("http")}?.let{return it}
-        val dash=data.optJSONObject("dash")
-        return dash?.optJSONArray("video")?.optJSONObject(0)?.optString("baseUrl")?.takeIf{it.startsWith("http")}?:error("没有可下载的视频流，可能需要登录或内容受限")
+        if(data.optJSONObject("dash")!=null) error("该视频为 DASH 音视频分离格式；当前版本尚未完成音视频合并，已阻止下载无声视频")
+        error("没有可下载的视频流，可能需要登录或内容受限")
     }
     fun subtitleTracks(item:VideoItem):List<Pair<String,String>>{
         val v=if(item.cid==0L)videoInfo(item.bvid.ifBlank{item.aid.toString()})else item
