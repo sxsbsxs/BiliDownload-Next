@@ -7,18 +7,32 @@ import okhttp3.Request
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-class BiliApi {
+class BiliApi(private val cookieProvider: () -> String? = { null }) {
     private val client=OkHttpClient.Builder().connectTimeout(15,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS).build()
     private fun get(url:String):String {
-        val req=Request.Builder().url(url).header("User-Agent","Mozilla/5.0 BiliDownloadNext/0.1").header("Referer","https://www.bilibili.com/").build()
+        val req=Request.Builder().url(url).header("User-Agent","Mozilla/5.0 BiliDownloadNext/0.1").header("Referer","https://www.bilibili.com/").apply { cookieProvider()?.takeIf { it.isNotBlank() }?.let { header("Cookie", it) } }.build()
         client.newCall(req).execute().use{r->if(!r.isSuccessful)error("HTTP ${r.code}");return r.body?.string()?:error("空响应")}
     }
     private fun json(url:String)=JSONObject(get(url))
-    fun search(keyword:String):List<VideoItem>{
-        val url="https://api.bilibili.com/x/web-interface/search/type".toHttpUrl().newBuilder().addQueryParameter("search_type","video").addQueryParameter("keyword",keyword).addQueryParameter("page","1").build().toString()
-        val root=json(url);if(root.optInt("code")!=0)error(root.optString("message","搜索失败"))
-        val arr=root.optJSONObject("data")?.optJSONObject("result")?.optJSONArray("video")?:return emptyList()
-        return (0 until arr.length()).mapNotNull{i->arr.optJSONObject(i)?.let{o->VideoItem(o.optString("bvid",o.optString("aid")),o.optString("bvid"),o.optLong("aid"),title=o.optString("title").replace(Regex("<[^>]*>"),""),owner=o.optString("author"),duration=o.optString("duration"),description=o.optString("description"))}}
+    fun search(keyword:String, page:Int=1):List<VideoItem> = searchPage(keyword,page).first
+
+    fun searchPage(keyword:String,page:Int=1):Pair<List<VideoItem>,Int>{
+        val url="https://api.bilibili.com/x/web-interface/search/type".toHttpUrl().newBuilder()
+            .addQueryParameter("search_type","video")
+            .addQueryParameter("keyword",keyword)
+            .addQueryParameter("page",page.coerceAtLeast(1).toString())
+            .build().toString()
+        val root=json(url)
+        if(root.optInt("code")!=0) error(root.optString("message","搜索失败"))
+        val data=root.optJSONObject("data") ?: return emptyList<VideoItem>() to 1
+        val arr=data.optJSONObject("result")?.optJSONArray("video")
+            ?: return emptyList<VideoItem>() to data.optInt("numPages",1).coerceAtLeast(1)
+        val items=(0 until arr.length()).mapNotNull{i->arr.optJSONObject(i)?.let{o->
+            VideoItem(o.optString("bvid",o.optString("aid")),o.optString("bvid"),o.optLong("aid"),
+                title=o.optString("title").replace(Regex("<[^>]*>"),""),
+                owner=o.optString("author"),duration=o.optString("duration"),description=o.optString("description"))
+        }}
+        return items to data.optInt("numPages",1).coerceAtLeast(1)
     }
     fun videoInfo(id:String):VideoItem{
         val b="https://api.bilibili.com/x/web-interface/view".toHttpUrl().newBuilder()
