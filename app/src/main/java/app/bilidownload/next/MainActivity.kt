@@ -37,6 +37,10 @@ class MainActivity:ComponentActivity() {
                         val result=withContext(Dispatchers.IO) { runCatching { val id=VideoInputParser.parse(q); if(id!=null) listOf(api.videoInfo(id)) else api.search(q) } }
                         result.onSuccess { done(it, null) }.onFailure { done(emptyList(), it.message ?: "搜索失败") }
                     }},
+                    onLoadPages={item,done -> lifecycleScope.launch {
+                        val result=withContext(Dispatchers.IO){runCatching{api.videoPages(item)}}
+                        result.onSuccess { done(it,null) }.onFailure { done(emptyList(),it.message ?: "分P读取失败") }
+                    }},
                     onDownload={item,quality,report -> lifecycleScope.launch {
                         val result=withContext(Dispatchers.IO){runCatching{api.downloadUrl(item,quality)}}
                         result.onSuccess {
@@ -48,14 +52,33 @@ class MainActivity:ComponentActivity() {
             }
         }
     }
+    if(showPages) AlertDialog(
+        onDismissRequest={showPages=false},
+        title={Text("选择分P")},
+        text={
+            LazyColumn(modifier=Modifier.heightIn(max=420.dp)) {
+                items(pageChoices,key={it.id}) { page ->
+                    TextButton(onClick={showPages=false;onDownload(page,quality){message=it}},modifier=Modifier.fillMaxWidth()) {
+                        Column(Modifier.fillMaxWidth()) {
+                            Text(page.title,maxLines=2)
+                            Text(page.duration,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton={TextButton(onClick={showPages=false}){Text("关闭")}}
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun HomeScreen(onSearch:(String,(List<VideoItem>,String?)->Unit)->Unit,onDownload:(VideoItem,Int,(String)->Unit)->Unit) {
+@Composable private fun HomeScreen(onSearch:(String,(List<VideoItem>,String?)->Unit)->Unit,onLoadPages:(VideoItem,(List<VideoItem>,String?)->Unit)->Unit,onDownload:(VideoItem,Int,(String)->Unit)->Unit) {
     var query by remember{mutableStateOf("")}
     var results by remember{mutableStateOf(emptyList<VideoItem>())}
     var loading by remember{mutableStateOf(false)}
     var quality by remember{mutableIntStateOf(80)}
+    var pageChoices by remember{mutableStateOf(emptyList<VideoItem>())}
+    var showPages by remember{mutableStateOf(false)}
     var message by remember{mutableStateOf("搜索公开视频，或粘贴 BV / AV 号及视频链接")}
     Scaffold(topBar={TopAppBar(title={Column{Text("BiliDownload",fontWeight=FontWeight.Bold);Text("NEXT · 视频下载工具",style=MaterialTheme.typography.labelSmall)}},actions={IconButton(onClick={message="设置与账号管理模块正在接入"}){Icon(Icons.Default.Settings,"设置")}})}) { pad ->
         Column(Modifier.fillMaxSize().padding(pad).padding(horizontal=16.dp)) {
@@ -79,7 +102,10 @@ class MainActivity:ComponentActivity() {
                             Text(item.title,style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
                             Spacer(Modifier.height(5.dp)); Text("${item.owner} · ${item.duration}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                             if(item.description.isNotBlank()){Spacer(Modifier.height(5.dp));Text(item.description,maxLines=2,style=MaterialTheme.typography.bodySmall)}
-                            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){Button(onClick={onDownload(item,quality){message=it}}){Icon(Icons.Default.Download,null);Spacer(Modifier.width(6.dp));Text("下载")}}
+                            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End) {
+                                TextButton(onClick={onLoadPages(item){pages,error -> pageChoices=pages;showPages=pages.isNotEmpty();message=error ?: "读取到 ${pages.size} 个分P"}}){Text("分P")}
+                                Button(onClick={onDownload(item,quality){message=it}}){Icon(Icons.Default.Download,null);Spacer(Modifier.width(6.dp));Text("下载")}
+                            }
                         }
                     }
                 }
