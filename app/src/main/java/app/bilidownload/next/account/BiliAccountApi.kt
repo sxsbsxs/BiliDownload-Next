@@ -44,9 +44,9 @@ class BiliAccountApi(private val cookieProvider: () -> String?) {
         )
     }
 
-    fun history(page: Int = 1): List<VideoItem> {
+    fun history(): List<VideoItem> {
         val url = "https://api.bilibili.com/x/web-interface/history/cursor".toHttpUrl().newBuilder()
-            .addQueryParameter("ps", "20").addQueryParameter("max", if (page <= 1) "0" else Long.MAX_VALUE.toString())
+            .addQueryParameter("ps", "20").addQueryParameter("max", "0")
             .addQueryParameter("view_at", "0").addQueryParameter("business", "").build().toString()
         val data = checked(url)
         val list = data.optJSONArray("list") ?: return emptyList()
@@ -117,7 +117,7 @@ class BiliAccountApi(private val cookieProvider: () -> String?) {
             val bvid = ep.optString("bvid")
             VideoItem(bvid.ifBlank { aid.toString() }, bvid, aid, ep.optLong("cid"),
                 ep.optString("long_title").ifBlank { ep.optString("title") },
-                data.optString("title"), ep.optString("duration"), ep.optString("share_copy"))
+                data.optString("title"), (ep.optLong("duration") / 1000L).toString(), ep.optString("share_copy"))
         }
         return BiliSeasonInfo(data.optLong("season_id"), data.optString("title"),
             data.optString("cover"), items)
